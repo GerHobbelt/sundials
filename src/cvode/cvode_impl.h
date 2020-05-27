@@ -326,6 +326,8 @@ typedef struct CVodeMemRec {
     -------------------------------------------*/
   CVMonitorFn cv_monitorfun;     /* func called with CVODE mem and user data  */
   long int cv_monitor_interval;  /* step interval to call cv_monitorfun       */
+  FILE *cv_var_err_fh;           /* a CSV file to write per-variable truncation error data */
+  char *cv_call_id;              /* a unique identifier for this call to CVodeInit */
 
   /*-------------------------
     Stability Limit Detection

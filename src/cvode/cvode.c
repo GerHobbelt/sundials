@@ -23,8 +23,10 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
+#include <errno.h>
 
 #include "cvode_impl.h"
+#include <nvector/nvector_serial.h>
 #include <sundials/sundials_math.h>
 #include <sundials/sundials_types.h>
 #include <sunnonlinsol/sunnonlinsol_newton.h>
@@ -565,6 +567,29 @@ int CVodeInit(void *cvode_mem, CVRhsFn f, realtype t0, N_Vector y0)
   /* Problem has been successfully initialized */
 
   cv_mem->cv_MallocDone = SUNTRUE;
+
+  char *var_err_fp = getenv("SUNDIALS_DEBUG");
+  if (var_err_fp) {
+    cv_mem->cv_var_err_fh = fopen(var_err_fp, "a");
+    if (!cv_mem->cv_var_err_fh) {
+      cvProcessError(cv_mem, CV_UNRECOGNIZED_ERR, "CVODE", "CVodeInit", "could not open JINKO_SUNDIALS_DEBUG=%s: %s", var_err_fp, strerror(errno));
+      return CV_UNRECOGNIZED_ERR;
+    }
+    /* Is this a new file? If so, write a CSV header */
+    long pos = ftell(cv_mem->cv_var_err_fh);
+    if (pos == 0) {
+      fprintf(cv_mem->cv_var_err_fh, "call_id,nst,t,q,h,i,y,lte,weight\n");
+    }
+    char *env_call_id = getenv("SUNDIALS_CALL_ID");
+    if (env_call_id) {
+      cv_mem->cv_call_id = strdup(env_call_id);
+    } else {
+      cv_mem->cv_call_id = strdup("UNKNOWN_ID");
+    }
+  } else {
+    cv_mem->cv_var_err_fh = NULL;
+    cv_mem->cv_call_id = NULL;
+  }
 
   return(CV_SUCCESS);
 }
@@ -1582,7 +1607,10 @@ void CVodeFree(void **cvode_mem)
     free(cv_mem->cv_rootdir); cv_mem->cv_rootdir = NULL;
     free(cv_mem->cv_gactive); cv_mem->cv_gactive = NULL;
   }
-
+  if (cv_mem->cv_call_id)
+    free(cv_mem->cv_call_id);
+  if (cv_mem->cv_var_err_fh)
+    fclose(cv_mem->cv_var_err_fh);
   free(*cvode_mem);
   *cvode_mem = NULL;
 }
@@ -2772,6 +2800,21 @@ static int cvNls(CVodeMem cv_mem, int nflag)
   /* compute acnrm if is was not already done by the nonlinear solver */
   if (!cv_mem->cv_acnrmcur)
     cv_mem->cv_acnrm = N_VWrmsNorm(cv_mem->cv_acor, cv_mem->cv_ewt);
+
+  if (cv_mem->cv_var_err_fh && N_VGetVectorID(cv_mem->cv_acor) == SUNDIALS_NVEC_SERIAL) {
+    for (int i = 0; i < N_VGetLength(cv_mem->cv_acor); i++) {
+      fprintf(cv_mem->cv_var_err_fh, "%s,%d,%f,%d,%f,%d,%f,%f,%f\n",
+        cv_mem->cv_call_id,
+        cv_mem->cv_nst,
+        cv_mem->cv_tn,
+        cv_mem->cv_q,
+        cv_mem->cv_h,
+        i,
+        NV_Ith_S(cv_mem->cv_zn[0],i),
+        NV_Ith_S(cv_mem->cv_acor,i),
+        NV_Ith_S(cv_mem->cv_ewt,i));
+    }
+  }
 
   /* update Jacobian status */
   cv_mem->cv_jcur = SUNFALSE;
